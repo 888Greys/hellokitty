@@ -365,6 +365,8 @@
   </div>
 
   <script>
+    const API_BASE = "INSERT_API_BASE_HERE";
+    const API_KEY = "INSERT_API_KEY_HERE";
     const STORAGE_KEY = "h100_chat_sessions_v1";
     const CONFIG_STORAGE_KEY = "h100_chat_config_v1";
     const DEFAULT_API_BASE = "http://localhost:8000/v1";
@@ -382,8 +384,8 @@
     let sessions = [];
     let activeSessionId = null;
     let currentModel = null;
-    let apiBase = "";
-    let apiKey = "";
+    let apiBase = API_BASE;
+    let apiKey = API_KEY;
     let shouldAutoScroll = true;
     const MAX_CONTEXT_TOKENS = 8192;
     const TARGET_CONTEXT_TOKENS = 7000;
@@ -451,6 +453,10 @@ Use Markdown for structure and fenced code blocks for examples.`;
       return String(value || "").trim().replace(/\/+$/, "");
     }
 
+    function isPlaceholder(value) {
+      return /^INSERT_[A-Z0-9_]+_HERE$/.test(String(value || "").trim());
+    }
+
     function saveConfig() {
       localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({
         apiBase,
@@ -472,6 +478,9 @@ Use Markdown for structure and fenced code blocks for examples.`;
         return false;
       }
     }
+
+    apiBase = isPlaceholder(apiBase) ? "" : normalizeApiBase(apiBase);
+    apiKey = isPlaceholder(apiKey) ? "" : String(apiKey || "").trim();
 
     async function ensureApiConfig() {
       if (apiBase) return { apiBase, apiKey };
