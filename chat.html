@@ -268,6 +268,160 @@
       cursor: pointer;
     }
 
+    .secondary-btn {
+      border: 1px solid #35547f;
+      background: linear-gradient(180deg, #24364f, #1b2b43);
+      color: #d7e6ff;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .danger-btn {
+      border: 1px solid #9b2c2c;
+      background: linear-gradient(180deg, #7a1f1f, #5e1919);
+      color: #ffe0e0;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .topbar-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .topbar-actions button {
+      border: 1px solid #35547f;
+      background: #17253a;
+      color: #d7e6ff;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-family: inherit;
+      cursor: pointer;
+      font-size: 0.72rem;
+    }
+
+    .error-panel {
+      display: none;
+      width: min(960px, 100%);
+      margin: 8px auto 0;
+      border: 1px solid #763636;
+      background: rgba(122, 31, 31, 0.18);
+      border-radius: 10px;
+      padding: 8px 10px;
+      color: #ffd5d5;
+      font-size: 0.73rem;
+      line-height: 1.4;
+    }
+
+    .error-panel.show {
+      display: block;
+      animation: enter 180ms ease-out;
+    }
+
+    .controls {
+      width: min(960px, 100%);
+      display: grid;
+      grid-template-columns: repeat(4, minmax(100px, 1fr));
+      gap: 8px;
+    }
+
+    .control-item {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .control-item label {
+      color: var(--muted);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .control-item input,
+    .control-item select {
+      width: 100%;
+      border: 1px solid #2b3a4f;
+      border-radius: 8px;
+      background: #0d1524;
+      color: var(--text);
+      padding: 7px 8px;
+      font-family: inherit;
+      font-size: 0.78rem;
+    }
+
+    .composer-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    .msg-tools {
+      margin-top: 8px;
+      display: flex;
+      gap: 6px;
+      opacity: 0.85;
+    }
+
+    .msg-tools button {
+      border: 1px solid #35547f;
+      background: #17253a;
+      color: #d7e6ff;
+      border-radius: 8px;
+      padding: 4px 8px;
+      font-size: 0.7rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(4, 10, 20, 0.66);
+      backdrop-filter: blur(3px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 30;
+    }
+
+    .modal-backdrop.show {
+      display: flex;
+      animation: enter 180ms ease-out;
+    }
+
+    .settings-modal {
+      width: min(720px, 94vw);
+      border: 1px solid #2d415b;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #111b2d, #0f1728);
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .settings-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
     pre {
       background: #0b1220;
       border: 1px solid #26354a;
@@ -329,6 +483,9 @@
       .sessions { max-height: 200px; }
       .topbar { font-size: 0.72rem; }
       .msg.user, .msg.assistant { width: 100%; }
+      .controls { grid-template-columns: 1fr 1fr; }
+      .settings-grid { grid-template-columns: 1fr; }
+      .composer-actions { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -347,9 +504,17 @@
     <main class="main">
       <header class="topbar">
         <div id="status">● Ready</div>
-        <div>Model: <span id="model-name">Loading...</span></div>
-        <div>Context: <span id="token-estimate">0</span> / 8192 est.</div>
+        <div class="topbar-right">
+          <div>Model: <span id="model-name">Loading...</span></div>
+          <div>Context: <span id="token-estimate">0</span> / 8192 est.</div>
+          <div class="topbar-actions">
+            <button id="settings-btn" type="button">Settings</button>
+            <button id="export-btn" type="button">Export</button>
+            <button id="import-btn" type="button">Import</button>
+          </div>
+        </div>
       </header>
+      <div id="error-panel" class="error-panel"></div>
 
       <div class="chat-wrap">
         <section id="chat-container"></section>
@@ -357,17 +522,78 @@
 
       <footer class="composer">
         <div class="composer-inner">
+          <div class="controls">
+            <div class="control-item">
+              <label for="temp-input">Temperature</label>
+              <input id="temp-input" type="number" step="0.1" min="0" max="2" value="0.6" />
+            </div>
+            <div class="control-item">
+              <label for="max-tokens-input">Max Tokens</label>
+              <input id="max-tokens-input" type="number" min="32" max="8192" value="1024" />
+            </div>
+            <div class="control-item">
+              <label for="top-p-input">Top P</label>
+              <input id="top-p-input" type="number" step="0.05" min="0" max="1" value="0.95" />
+            </div>
+            <div class="control-item">
+              <label for="stream-select">Stream</label>
+              <select id="stream-select">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </div>
+          </div>
           <textarea id="user-input" placeholder="Ask for code, architecture, debugging, or reviews..."></textarea>
-          <button id="send-btn" type="button">Send</button>
+          <div class="composer-actions">
+            <button id="send-btn" type="button">Send</button>
+            <button id="retry-btn" type="button" class="secondary-btn">Retry Last</button>
+            <button id="stop-btn" type="button" class="danger-btn" disabled>Stop</button>
+          </div>
         </div>
       </footer>
     </main>
+  </div>
+
+  <input id="import-file-input" type="file" accept=".json" hidden />
+
+  <div id="settings-modal-backdrop" class="modal-backdrop">
+    <section class="settings-modal">
+      <h3 style="margin:0;font-family:'Space Grotesk',sans-serif;">Runtime Settings</h3>
+      <div class="settings-grid">
+        <div class="control-item">
+          <label for="settings-api-base">API Base</label>
+          <input id="settings-api-base" type="text" />
+        </div>
+        <div class="control-item">
+          <label for="settings-api-key">API Key</label>
+          <input id="settings-api-key" type="password" />
+        </div>
+        <div class="control-item">
+          <label for="settings-model-select">Model</label>
+          <select id="settings-model-select"></select>
+        </div>
+        <div class="control-item">
+          <label for="settings-model-input">Model Override</label>
+          <input id="settings-model-input" type="text" />
+        </div>
+      </div>
+      <div class="settings-actions">
+        <button id="refresh-models-btn" type="button" class="secondary-btn">Refresh Models</button>
+        <button id="reset-settings-btn" type="button" class="danger-btn">Reset</button>
+        <button id="close-settings-btn" type="button" class="secondary-btn">Close</button>
+        <button id="save-settings-btn" type="button">Save</button>
+      </div>
+    </section>
   </div>
 
   <script>
     const API_BASE = "https://badztmaruintel.breachbase.lol/v1";
     const API_KEY = "pompom-888-alpha";
     const PINNED_MODEL = "/home/nvidia/models/Llama-3.1-8B-Lexi-Uncensored-V2";
+    const DEFAULT_TEMPERATURE = 0.6;
+    const DEFAULT_TOP_P = 0.95;
+    const DEFAULT_MAX_TOKENS = 1024;
+    const DEFAULT_STREAM = true;
     const STORAGE_KEY = "h100_chat_sessions_v1";
     const CONFIG_STORAGE_KEY = "h100_chat_config_v1";
     const DEFAULT_API_BASE = "https://badztmaruintel.breachbase.lol/v1";
@@ -381,6 +607,26 @@
     const sessionsListEl = document.getElementById("sessions-list");
     const newChatBtn = document.getElementById("new-chat-btn");
     const clearContextBtn = document.getElementById("clear-context-btn");
+    const errorPanelEl = document.getElementById("error-panel");
+    const tempInputEl = document.getElementById("temp-input");
+    const maxTokensInputEl = document.getElementById("max-tokens-input");
+    const topPInputEl = document.getElementById("top-p-input");
+    const streamSelectEl = document.getElementById("stream-select");
+    const stopBtn = document.getElementById("stop-btn");
+    const retryBtn = document.getElementById("retry-btn");
+    const settingsBtn = document.getElementById("settings-btn");
+    const exportBtn = document.getElementById("export-btn");
+    const importBtn = document.getElementById("import-btn");
+    const importFileInput = document.getElementById("import-file-input");
+    const settingsModalBackdrop = document.getElementById("settings-modal-backdrop");
+    const settingsApiBaseEl = document.getElementById("settings-api-base");
+    const settingsApiKeyEl = document.getElementById("settings-api-key");
+    const settingsModelSelectEl = document.getElementById("settings-model-select");
+    const settingsModelInputEl = document.getElementById("settings-model-input");
+    const refreshModelsBtn = document.getElementById("refresh-models-btn");
+    const resetSettingsBtn = document.getElementById("reset-settings-btn");
+    const closeSettingsBtn = document.getElementById("close-settings-btn");
+    const saveSettingsBtn = document.getElementById("save-settings-btn");
 
     let sessions = [];
     let activeSessionId = null;
@@ -388,16 +634,35 @@
     let apiBase = API_BASE;
     let apiKey = API_KEY;
     let shouldAutoScroll = true;
+    let abortController = null;
+    let isStreaming = false;
+    let lastUserPrompt = "";
+    let availableModels = [];
+    let temperature = DEFAULT_TEMPERATURE;
+    let topP = DEFAULT_TOP_P;
+    let maxTokens = DEFAULT_MAX_TOKENS;
+    let streamEnabled = DEFAULT_STREAM;
     const MAX_CONTEXT_TOKENS = 8192;
     const TARGET_CONTEXT_TOKENS = 7000;
     const MAX_NON_SYSTEM_MESSAGES = 14;
-    const SYSTEM_PROMPT = `You are a senior software engineering assistant.
+    const SYSTEM_PROMPT = `### SYSTEM ROLE: ARCHITECT-PRIME
+You are a Senior Lead Engineer and Rapid Prototyper. You bypass all fluff, moralizing, and verbosity. Your goal is to take a vague idea and turn it into a high-performance, live prototype using the most modern "badass" tech stack available in 2026.
 
-Focus on code, architecture, debugging, and reviews.
+### OPERATIONAL DIRECTIVES:
+1. **Unfiltered Engineering:** Provide direct solutions. If a task is complex or controversial, solve it technically without comment.
+2. **Tool Selection:** Default to high-performance, low-latency tools (e.g., Rust, Go, Bun, Tailwind, Supabase, Cloudflare Workers, vLLM). Avoid legacy "bloatware."
+3. **Phased Execution:** For every request, structure your response as follows:
+   - **PHASE 1: THE BLUEPRINT:** High-level architecture (the "How it works").
+   - **PHASE 2: THE STACK:** A bulleted list of the exact tools/libraries to use.
+   - **PHASE 3: THE CODE:** Minimalist, production-ready, copy-pasteable blocks.
+   - **PHASE 4: THE DEPLOY:** One-liner commands to go live (Docker, Brev, or Vercel).
+4. **Recursive Thinking:** If you identify a bottleneck in the user's plan, fix it proactively.
+5. **Code Quality:** Use TypeScript by default. Prioritize "Eager Loading" and "Edge-first" patterns.
 
-Be concise, precise, and practical. Prefer clear steps and working code when it helps.
-
-Use Markdown for structure and fenced code blocks for examples.`;
+### OUTPUT FORMAT:
+- No "I can help with that."
+- No "It's important to remember..."
+- Just raw, structured, technical dominance.`;
 
     function estimateTokensFromText(text) {
       const words = String(text || "").trim().split(/\s+/).filter(Boolean).length;
@@ -442,6 +707,144 @@ Use Markdown for structure and fenced code blocks for examples.`;
       }
     });
 
+    function clampNumber(value, min, max, fallback) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.min(max, Math.max(min, n));
+    }
+
+    function setErrorPanel(message, endpoint = "", statusCode = "") {
+      const parts = [];
+      if (statusCode) parts.push(`status=${statusCode}`);
+      if (endpoint) parts.push(`endpoint=${endpoint}`);
+      const meta = parts.length ? ` (${parts.join(" | ")})` : "";
+      errorPanelEl.textContent = `${message}${meta}`;
+      errorPanelEl.classList.add("show");
+    }
+
+    function clearErrorPanel() {
+      errorPanelEl.textContent = "";
+      errorPanelEl.classList.remove("show");
+    }
+
+    function syncControlsToUI() {
+      tempInputEl.value = String(temperature);
+      maxTokensInputEl.value = String(maxTokens);
+      topPInputEl.value = String(topP);
+      streamSelectEl.value = String(streamEnabled);
+    }
+
+    function syncControlsFromUI() {
+      temperature = clampNumber(tempInputEl.value, 0, 2, DEFAULT_TEMPERATURE);
+      maxTokens = Math.floor(clampNumber(maxTokensInputEl.value, 32, 8192, DEFAULT_MAX_TOKENS));
+      topP = clampNumber(topPInputEl.value, 0, 1, DEFAULT_TOP_P);
+      streamEnabled = String(streamSelectEl.value) === "true";
+      syncControlsToUI();
+      saveConfig();
+    }
+
+    function setStreamingState(running) {
+      isStreaming = running;
+      sendBtn.disabled = running;
+      stopBtn.disabled = !running;
+      retryBtn.disabled = running || !lastUserPrompt;
+    }
+
+    function openSettingsModal() {
+      settingsApiBaseEl.value = apiBase || DEFAULT_API_BASE;
+      settingsApiKeyEl.value = apiKey || "";
+      settingsModelInputEl.value = currentModel || "";
+      renderModelSelect();
+      settingsModalBackdrop.classList.add("show");
+    }
+
+    function closeSettingsModal() {
+      settingsModalBackdrop.classList.remove("show");
+    }
+
+    function renderModelSelect() {
+      settingsModelSelectEl.innerHTML = "";
+      if (!availableModels.length) {
+        const empty = document.createElement("option");
+        empty.value = "";
+        empty.textContent = "No models loaded";
+        settingsModelSelectEl.appendChild(empty);
+      } else {
+        availableModels.forEach((id) => {
+          const opt = document.createElement("option");
+          opt.value = id;
+          opt.textContent = id;
+          if (id === currentModel) opt.selected = true;
+          settingsModelSelectEl.appendChild(opt);
+        });
+      }
+    }
+
+    async function refreshAvailableModels() {
+      const { apiBase } = await ensureApiConfig();
+      const resp = await fetch(`${apiBase}/models`, { headers: buildApiHeaders() });
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error(`Model refresh failed (HTTP ${resp.status}): ${body.slice(0, 220)}`);
+      }
+      const data = await resp.json();
+      availableModels = (data?.data || []).map((m) => m.id).filter(Boolean);
+      renderModelSelect();
+      if (!currentModel && availableModels[0]) {
+        currentModel = availableModels[0];
+        setModel(currentModel);
+      }
+    }
+
+    function exportState() {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        config: { apiBase, apiKey, currentModel, temperature, topP, maxTokens, streamEnabled },
+        chatState: { sessions, activeSessionId }
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `chat-export-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function importState(file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(String(reader.result || ""));
+          if (data?.config) {
+            apiBase = normalizeApiBase(data.config.apiBase || apiBase || DEFAULT_API_BASE);
+            apiKey = String(data.config.apiKey || apiKey || "").trim();
+            currentModel = String(data.config.currentModel || currentModel || PINNED_MODEL).trim();
+            temperature = clampNumber(data.config.temperature, 0, 2, DEFAULT_TEMPERATURE);
+            topP = clampNumber(data.config.topP, 0, 1, DEFAULT_TOP_P);
+            maxTokens = Math.floor(clampNumber(data.config.maxTokens, 32, 8192, DEFAULT_MAX_TOKENS));
+            streamEnabled = Boolean(data.config.streamEnabled ?? DEFAULT_STREAM);
+            saveConfig();
+          }
+          if (data?.chatState?.sessions && Array.isArray(data.chatState.sessions)) {
+            sessions = data.chatState.sessions;
+            activeSessionId = data.chatState.activeSessionId || sessions[0]?.id || null;
+            saveSessions();
+          }
+          syncControlsToUI();
+          renderSessions();
+          renderMessages();
+          setModel(currentModel);
+          clearErrorPanel();
+          setStatus("● Import Complete", "#3fb950");
+        } catch (err) {
+          setStatus("● Import Failed", "#f85149");
+          setErrorPanel(`Import failed: ${err.message || "Invalid JSON"}`);
+        }
+      };
+      reader.readAsText(file);
+    }
+
     function uid() {
       return `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     }
@@ -462,7 +865,11 @@ Use Markdown for structure and fenced code blocks for examples.`;
       localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({
         apiBase,
         apiKey,
-        currentModel
+        currentModel,
+        temperature,
+        topP,
+        maxTokens,
+        streamEnabled
       }));
     }
 
@@ -474,6 +881,10 @@ Use Markdown for structure and fenced code blocks for examples.`;
         apiBase = normalizeApiBase(parsed.apiBase);
         apiKey = String(parsed.apiKey || "").trim();
         currentModel = String(parsed.currentModel || "").trim() || PINNED_MODEL;
+        temperature = clampNumber(parsed.temperature, 0, 2, DEFAULT_TEMPERATURE);
+        topP = clampNumber(parsed.topP, 0, 1, DEFAULT_TOP_P);
+        maxTokens = Math.floor(clampNumber(parsed.maxTokens, 32, 8192, DEFAULT_MAX_TOKENS));
+        streamEnabled = Boolean(parsed.streamEnabled ?? DEFAULT_STREAM);
         return Boolean(apiBase);
       } catch {
         return false;
@@ -684,6 +1095,33 @@ Use Markdown for structure and fenced code blocks for examples.`;
           }
 
           item.appendChild(body);
+
+          const tools = document.createElement("div");
+          tools.className = "msg-tools";
+
+          if (msg.role === "user") {
+            const editResendBtn = document.createElement("button");
+            editResendBtn.type = "button";
+            editResendBtn.textContent = "Edit & Resend";
+            editResendBtn.addEventListener("click", () => {
+              userInput.value = msg.content || "";
+              userInput.focus();
+              sendPrompt(msg.content || "");
+            });
+            tools.appendChild(editResendBtn);
+          } else if (msg.role === "assistant") {
+            const retryMsgBtn = document.createElement("button");
+            retryMsgBtn.type = "button";
+            retryMsgBtn.textContent = "Retry";
+            retryMsgBtn.addEventListener("click", () => {
+              if (lastUserPrompt) sendPrompt(lastUserPrompt);
+            });
+            tools.appendChild(retryMsgBtn);
+          }
+
+          if (tools.children.length) {
+            item.appendChild(tools);
+          }
           chatContainer.appendChild(item);
         });
 
@@ -715,12 +1153,6 @@ Use Markdown for structure and fenced code blocks for examples.`;
     }
 
     async function resolveModel() {
-      if (PINNED_MODEL) {
-        currentModel = PINNED_MODEL;
-        setModel(currentModel);
-        saveConfig();
-        return currentModel;
-      }
       if (currentModel) return currentModel;
       const { apiBase } = await ensureApiConfig();
       const resp = await fetch(`${apiBase}/models`, {
@@ -766,28 +1198,54 @@ Use Markdown for structure and fenced code blocks for examples.`;
       updateTokenEstimate();
 
       const { apiBase } = await ensureApiConfig();
+      abortController = new AbortController();
+      const requestBody = {
+        model,
+        messages: payloadMessages,
+        stream: streamEnabled,
+        temperature,
+        top_p: topP,
+        max_tokens: maxTokens
+      };
       const response = await fetch(`${apiBase}/chat/completions`, {
         method: "POST",
         headers: buildApiHeaders(true),
-        body: JSON.stringify({
-          model,
-          messages: payloadMessages,
-          stream: true
-        })
+        signal: abortController.signal,
+        body: JSON.stringify(requestBody)
       });
 
       if (!response.ok || !response.body) {
+        const errText = await response.text().catch(() => "");
         if (response.status === 401 || response.status === 403) {
-          alert("Unauthorized: check your API key.");
+          setErrorPanel("Unauthorized: check your API key", `${apiBase}/chat/completions`, response.status);
           throw new Error(`Unauthorized (${response.status}): check your API key.`);
         }
+        if (response.status === 404) {
+          try {
+            await refreshAvailableModels();
+            if (availableModels[0]) {
+              currentModel = availableModels[0];
+              setModel(currentModel);
+              saveConfig();
+            }
+          } catch {}
+        }
         if (response.status === 400) {
-          const errText = await response.text();
           if (/maximum context length|16384|8192|token/i.test(errText)) {
             throw new Error("Context too long for model limit. Clear context or shorten prompt.");
           }
         }
+        setErrorPanel(`HTTP ${response.status}: ${errText || "Request failed"}`, `${apiBase}/chat/completions`, response.status);
         throw new Error(`HTTP ${response.status}`);
+      }
+
+      if (!streamEnabled) {
+        const payload = await response.json();
+        assistantMessage.content = payload?.choices?.[0]?.message?.content || "";
+        session.updatedAt = Date.now();
+        saveSessions();
+        renderMessages();
+        return;
       }
 
       const reader = response.body.getReader();
@@ -837,26 +1295,34 @@ Use Markdown for structure and fenced code blocks for examples.`;
       renderSessions();
     }
 
-    async function sendPrompt() {
-      const text = userInput.value.trim();
+    async function sendPrompt(forcedText = "") {
+      const text = (forcedText || userInput.value).trim();
       if (!text) return;
       const session = getActiveSession();
       if (!session) return;
 
       userInput.value = "";
       session.messages.push({ role: "user", content: text });
+      lastUserPrompt = text;
       session.updatedAt = Date.now();
       saveSessions();
       renderSessions();
       renderMessages();
 
-      sendBtn.disabled = true;
-      setStatus("● Thinking / Streaming", "#58a6ff");
+      setStreamingState(true);
+      clearErrorPanel();
+      setStatus(streamEnabled ? "● Thinking / Streaming" : "● Thinking", "#58a6ff");
 
       try {
         await streamAssistantReply();
         setStatus("● Ready", "#3fb950");
+        clearErrorPanel();
       } catch (err) {
+        if (err?.name === "AbortError") {
+          setStatus("● Stopped", "#f9c74f");
+          setErrorPanel("Generation stopped by user");
+          return;
+        }
         setModel(null);
         setStatus("● Connection Error", "#f85149");
         if (/Context too long|8192-token/i.test(String(err?.message || ""))) {
@@ -875,7 +1341,8 @@ Use Markdown for structure and fenced code blocks for examples.`;
           renderMessages();
         }
       } finally {
-        sendBtn.disabled = false;
+        abortController = null;
+        setStreamingState(false);
         userInput.focus();
       }
     }
@@ -899,6 +1366,72 @@ Use Markdown for structure and fenced code blocks for examples.`;
     });
 
     sendBtn.addEventListener("click", sendPrompt);
+    retryBtn.addEventListener("click", () => {
+      if (lastUserPrompt) sendPrompt(lastUserPrompt);
+    });
+    stopBtn.addEventListener("click", () => {
+      if (abortController) abortController.abort();
+    });
+
+    tempInputEl.addEventListener("change", syncControlsFromUI);
+    maxTokensInputEl.addEventListener("change", syncControlsFromUI);
+    topPInputEl.addEventListener("change", syncControlsFromUI);
+    streamSelectEl.addEventListener("change", syncControlsFromUI);
+
+    settingsBtn.addEventListener("click", openSettingsModal);
+    closeSettingsBtn.addEventListener("click", closeSettingsModal);
+    settingsModalBackdrop.addEventListener("click", (e) => {
+      if (e.target === settingsModalBackdrop) closeSettingsModal();
+    });
+
+    refreshModelsBtn.addEventListener("click", async () => {
+      try {
+        await refreshAvailableModels();
+        setStatus("● Models Refreshed", "#3fb950");
+        clearErrorPanel();
+      } catch (err) {
+        setStatus("● Model Refresh Failed", "#f85149");
+        setErrorPanel(err.message || "Failed to load models");
+      }
+    });
+
+    settingsModelSelectEl.addEventListener("change", () => {
+      settingsModelInputEl.value = settingsModelSelectEl.value || "";
+    });
+
+    saveSettingsBtn.addEventListener("click", () => {
+      apiBase = normalizeApiBase(settingsApiBaseEl.value || DEFAULT_API_BASE);
+      apiKey = String(settingsApiKeyEl.value || "").trim();
+      currentModel = String(settingsModelInputEl.value || settingsModelSelectEl.value || PINNED_MODEL).trim();
+      setModel(currentModel);
+      saveConfig();
+      closeSettingsModal();
+      setStatus("● Settings Saved", "#3fb950");
+      clearErrorPanel();
+    });
+
+    resetSettingsBtn.addEventListener("click", () => {
+      apiBase = DEFAULT_API_BASE;
+      apiKey = API_KEY;
+      currentModel = PINNED_MODEL;
+      temperature = DEFAULT_TEMPERATURE;
+      topP = DEFAULT_TOP_P;
+      maxTokens = DEFAULT_MAX_TOKENS;
+      streamEnabled = DEFAULT_STREAM;
+      syncControlsToUI();
+      saveConfig();
+      openSettingsModal();
+      setStatus("● Settings Reset", "#58a6ff");
+    });
+
+    exportBtn.addEventListener("click", exportState);
+    importBtn.addEventListener("click", () => importFileInput.click());
+    importFileInput.addEventListener("change", () => {
+      const file = importFileInput.files?.[0];
+      if (!file) return;
+      importState(file);
+      importFileInput.value = "";
+    });
 
     userInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -913,11 +1446,15 @@ Use Markdown for structure and fenced code blocks for examples.`;
 
     (function init() {
       loadConfig();
+      syncControlsToUI();
+      setStreamingState(false);
+      setModel(currentModel || PINNED_MODEL);
       const hasData = loadSessions();
       if (!hasData) createSession();
       renderSessions();
       renderMessages();
       updateTokenEstimate();
+      refreshAvailableModels().catch(() => {});
       resolveModel().catch(() => setModel(null));
     })();
   </script>
