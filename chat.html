@@ -367,6 +367,7 @@
   <script>
     const API_BASE = "https://badztmaruintel.breachbase.lol/v1";
     const API_KEY = "pompom-888-alpha";
+    const PINNED_MODEL = "/home/nvidia/models/Llama-3.1-8B-Lexi-Uncensored-V2";
     const STORAGE_KEY = "h100_chat_sessions_v1";
     const CONFIG_STORAGE_KEY = "h100_chat_config_v1";
     const DEFAULT_API_BASE = "https://badztmaruintel.breachbase.lol/v1";
@@ -383,7 +384,7 @@
 
     let sessions = [];
     let activeSessionId = null;
-    let currentModel = null;
+    let currentModel = PINNED_MODEL;
     let apiBase = API_BASE;
     let apiKey = API_KEY;
     let shouldAutoScroll = true;
@@ -472,7 +473,7 @@ Use Markdown for structure and fenced code blocks for examples.`;
         const parsed = JSON.parse(raw);
         apiBase = normalizeApiBase(parsed.apiBase);
         apiKey = String(parsed.apiKey || "").trim();
-        currentModel = String(parsed.currentModel || "").trim() || null;
+        currentModel = String(parsed.currentModel || "").trim() || PINNED_MODEL;
         return Boolean(apiBase);
       } catch {
         return false;
@@ -714,6 +715,12 @@ Use Markdown for structure and fenced code blocks for examples.`;
     }
 
     async function resolveModel() {
+      if (PINNED_MODEL) {
+        currentModel = PINNED_MODEL;
+        setModel(currentModel);
+        saveConfig();
+        return currentModel;
+      }
       if (currentModel) return currentModel;
       const { apiBase } = await ensureApiConfig();
       const resp = await fetch(`${apiBase}/models`, {
