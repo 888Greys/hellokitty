@@ -365,11 +365,11 @@
   </div>
 
   <script>
-    const API_BASE = "INSERT_API_BASE_HERE";
-    const API_KEY = "INSERT_API_KEY_HERE";
+    const API_BASE = "https://badztmaruintel.breachbase.lol/v1";
+    const API_KEY = "pompom-888-alpha";
     const STORAGE_KEY = "h100_chat_sessions_v1";
     const CONFIG_STORAGE_KEY = "h100_chat_config_v1";
-    const DEFAULT_API_BASE = "http://localhost:8000/v1";
+    const DEFAULT_API_BASE = "https://badztmaruintel.breachbase.lol/v1";
 
     const chatContainer = document.getElementById("chat-container");
     const userInput = document.getElementById("user-input");
@@ -387,8 +387,8 @@
     let apiBase = API_BASE;
     let apiKey = API_KEY;
     let shouldAutoScroll = true;
-    const MAX_CONTEXT_TOKENS = 8192;
-    const TARGET_CONTEXT_TOKENS = 7000;
+    const MAX_CONTEXT_TOKENS = 16384;
+    const TARGET_CONTEXT_TOKENS = 14000;
     const MAX_NON_SYSTEM_MESSAGES = 14;
     const SYSTEM_PROMPT = `You are a senior software engineering assistant.
 
@@ -507,7 +507,7 @@ Use Markdown for structure and fenced code blocks for examples.`;
         headers["Content-Type"] = "application/json";
       }
       if (apiKey) {
-        headers.Authorization = `Bearer ${apiKey}`;
+        headers["X-Pompom-Key"] = apiKey;
       }
       return headers;
     }
@@ -762,8 +762,8 @@ Use Markdown for structure and fenced code blocks for examples.`;
         }
         if (response.status === 400) {
           const errText = await response.text();
-          if (/maximum context length|8192|token/i.test(errText)) {
-            throw new Error("Context too long for 8192-token model limit. Clear context or shorten prompt.");
+          if (/maximum context length|16384|8192|token/i.test(errText)) {
+            throw new Error("Context too long for model limit. Clear context or shorten prompt.");
           }
         }
         throw new Error(`HTTP ${response.status}`);
@@ -904,3 +904,4 @@ Use Markdown for structure and fenced code blocks for examples.`;
   </script>
 </body>
 </html>
+
