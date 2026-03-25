@@ -3,7 +3,10 @@ import {
   buildChatPayload,
   chooseModel,
   createInitialSession,
+  createMessage,
+  isLegacyArchitectPrompt,
   normalizeApiBase,
+  sanitizeSessions,
 } from './chat'
 
 describe('chat helpers', () => {
@@ -28,5 +31,30 @@ describe('chat helpers', () => {
     expect(payload.model).toBe('model-1')
     expect(payload.stream).toBe(true)
     expect(payload.messages[0]).toEqual({ role: 'system', content: 'system prompt' })
+  })
+
+  it('detects the legacy architect prompt', () => {
+    expect(isLegacyArchitectPrompt('### SYSTEM ROLE: ARCHITECT-PRIME')).toBe(true)
+    expect(isLegacyArchitectPrompt('normal assistant prompt')).toBe(false)
+  })
+
+  it('resets legacy sessions to the current default system prompt', () => {
+    const sessions = [
+      {
+        id: '1',
+        title: 'Old Session',
+        updatedAt: 1,
+        messages: [
+          createMessage('system', '### SYSTEM ROLE: ARCHITECT-PRIME'),
+          createMessage('user', 'hello'),
+          createMessage('assistant', 'PHASE 1: THE BLUEPRINT'),
+        ],
+      },
+    ]
+
+    const sanitized = sanitizeSessions(sessions, 'clean prompt')
+    expect(sanitized[0]?.title).toBe('New Chat')
+    expect(sanitized[0]?.messages).toHaveLength(1)
+    expect(sanitized[0]?.messages[0]?.content).toBe('clean prompt')
   })
 })

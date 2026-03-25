@@ -17,6 +17,7 @@ import {
   formatTime,
   makeDefaultApiBase,
   normalizeApiBase,
+  sanitizeSessions,
   type ChatSession,
   type ChatSettings,
 } from './lib/chat'
@@ -70,7 +71,7 @@ function loadSessions(): ChatSession[] {
     if (!Array.isArray(parsed) || parsed.length === 0) {
       return [createInitialSession(DEFAULT_SYSTEM_PROMPT)]
     }
-    return parsed
+    return sanitizeSessions(parsed, DEFAULT_SYSTEM_PROMPT)
   } catch {
     return [createInitialSession(DEFAULT_SYSTEM_PROMPT)]
   }

@@ -51,6 +51,40 @@ export function createInitialSession(systemPrompt: string): ChatSession {
   }
 }
 
+export function isLegacyArchitectPrompt(content: string) {
+  const normalized = content.toLowerCase()
+  return (
+    normalized.includes('architect-prime') ||
+    normalized.includes('phase 1: the blueprint') ||
+    normalized.includes('high-performance, live prototype')
+  )
+}
+
+export function sanitizeSession(session: ChatSession, systemPrompt: string): ChatSession {
+  const firstMessage = session.messages[0]
+  if (firstMessage?.role !== 'system') {
+    return {
+      ...session,
+      messages: [createMessage('system', systemPrompt), ...session.messages],
+    }
+  }
+
+  if (!isLegacyArchitectPrompt(firstMessage.content)) {
+    return session
+  }
+
+  return {
+    ...session,
+    title: 'New Chat',
+    updatedAt: Date.now(),
+    messages: [createMessage('system', systemPrompt)],
+  }
+}
+
+export function sanitizeSessions(sessions: ChatSession[], systemPrompt: string) {
+  return sessions.map((session) => sanitizeSession(session, systemPrompt))
+}
+
 export function normalizeApiBase(input?: string) {
   const fallback = makeDefaultApiBase()
   if (!input?.trim()) return fallback
