@@ -387,8 +387,8 @@
     let apiBase = API_BASE;
     let apiKey = API_KEY;
     let shouldAutoScroll = true;
-    const MAX_CONTEXT_TOKENS = 16384;
-    const TARGET_CONTEXT_TOKENS = 14000;
+    const MAX_CONTEXT_TOKENS = 8192;
+    const TARGET_CONTEXT_TOKENS = 7000;
     const MAX_NON_SYSTEM_MESSAGES = 14;
     const SYSTEM_PROMPT = `You are a senior software engineering assistant.
 
@@ -600,6 +600,22 @@ Use Markdown for structure and fenced code blocks for examples.`;
         .replaceAll("'", "&#39;");
     }
 
+    function sanitizeAssistantContent(content) {
+      let text = String(content || "");
+      text = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+      if (text.includes("</think>")) {
+        text = text.split("</think>").slice(-1)[0];
+      }
+      return text.trimStart();
+    }
+
+    function renderAssistantBody(bodyEl, rawContent) {
+      const sanitized = sanitizeAssistantContent(rawContent);
+      bodyEl.innerHTML = marked.parse(sanitized);
+      bodyEl.querySelectorAll("pre code").forEach((block) => hljs.highlightElement(block));
+      injectCopyButtons(bodyEl);
+    }
+
     function injectCopyButtons(root) {
       root.querySelectorAll("pre").forEach((pre) => {
         if (pre.querySelector(".code-controls")) return;
@@ -661,9 +677,7 @@ Use Markdown for structure and fenced code blocks for examples.`;
 
           const body = document.createElement("div");
           if (msg.role === "assistant") {
-            body.innerHTML = marked.parse(msg.content || "");
-            body.querySelectorAll("pre code").forEach((block) => hljs.highlightElement(block));
-            injectCopyButtons(body);
+            renderAssistantBody(body, msg.content || "");
           } else {
             body.textContent = msg.content;
           }
@@ -794,9 +808,7 @@ Use Markdown for structure and fenced code blocks for examples.`;
             const last = chatContainer.lastElementChild;
             if (last) {
               const body = last.lastElementChild;
-              body.innerHTML = marked.parse(assistantMessage.content);
-              body.querySelectorAll("pre code").forEach((block) => hljs.highlightElement(block));
-              injectCopyButtons(body);
+              renderAssistantBody(body, assistantMessage.content);
               if (shouldAutoScroll) {
                 chatContainer.scrollTop = chatContainer.scrollHeight;
               }
