@@ -14,12 +14,14 @@ MODEL_PATH="${MODEL_PATH:-/home/nvidia/models/Llama-3.1-8B-Lexi-Uncensored-V2}"
 MODEL_MAX_LEN="${MODEL_MAX_LEN:-8192}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.85}"
 TUNNEL_NAME="${TUNNEL_NAME:-gpu}"
+TUNNEL_TOKEN="${TUNNEL_TOKEN:-}"
 
 LOG_DIR="${LOG_DIR:-/home/nvidia}"
 VLLM_LOG="${VLLM_LOG:-$LOG_DIR/vllm.log}"
 GATEKEEPER_LOG="${GATEKEEPER_LOG:-$LOG_DIR/gatekeeper.log}"
 TUNNEL_LOG="${TUNNEL_LOG:-$LOG_DIR/tunnel.log}"
 
+GATEKEEPER_SRC="${GATEKEEPER_SRC:-/home/nvidia/hellokitty/gatekeeper.go}"
 GATEKEEPER_BIN="${GATEKEEPER_BIN:-/home/nvidia/gatekeeper}"
 
 if [[ -z "${API_KEY:-${POMPOM_KEY:-}}" ]]; then
@@ -32,12 +34,16 @@ if [[ -z "${APP_PASS_SHA256:-}" && -z "${APP_PASS:-}" ]]; then
   exit 1
 fi
 
-if [[ ! -x "$GATEKEEPER_BIN" ]]; then
-  if [[ -f "/home/nvidia/gatekeeper.go" ]] && command -v go >/dev/null 2>&1; then
-    go build -o /home/nvidia/gatekeeper /home/nvidia/gatekeeper.go
-    GATEKEEPER_BIN="/home/nvidia/gatekeeper"
+if [[ ! -f "$GATEKEEPER_SRC" ]]; then
+  echo "Gatekeeper source not found at $GATEKEEPER_SRC"
+  exit 1
+fi
+
+if [[ ! -x "$GATEKEEPER_BIN" || "$GATEKEEPER_SRC" -nt "$GATEKEEPER_BIN" ]]; then
+  if command -v go >/dev/null 2>&1; then
+    go build -o "$GATEKEEPER_BIN" "$GATEKEEPER_SRC"
   else
-    echo "Gatekeeper binary not found at $GATEKEEPER_BIN"
+    echo "go is required to build gatekeeper"
     exit 1
   fi
 fi
@@ -50,37 +56,13 @@ screen -S vllm-api -X quit || true
 screen -S gatekeeper-api -X quit || true
 screen -S tunnel-gpu -X quit || true
 
-screen -dmS vllm-api bash -lc "
-cd /home/nvidia
-source '$VLLM_ENV/bin/activate'
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-python -m vllm.entrypoints.openai.api_server \
-  --model '$MODEL_PATH' \
-  --port 8000 \
-  --tensor-parallel-size 1 \
-  --max-model-len '$MODEL_MAX_LEN' \
-  --enforce-eager \
-  --gpu-memory-utilization '$GPU_MEMORY_UTILIZATION' \
-  > '$VLLM_LOG' 2>&1
-"
-
-screen -dmS gatekeeper-api bash -lc "
-set -a
-[[ -f '$ENV_FILE' ]] && source '$ENV_FILE'
-set +a
-'$GATEKEEPER_BIN' > '$GATEKEEPER_LOG' 2>&1
-"
-
-screen -dmS tunnel-gpu bash -lc "
-set -a
-[[ -f '$ENV_FILE' ]] && source '$ENV_FILE'
-set +a
-if [[ -n \"\${TUNNEL_TOKEN:-}\" ]]; then
-  /usr/local/bin/cloudflared --no-autoupdate tunnel run --token \"\$TUNNEL_TOKEN\" > '$TUNNEL_LOG' 2>&1
-else
-  /usr/local/bin/cloudflared --no-autoupdate tunnel run '$TUNNEL_NAME' > '$TUNNEL_LOG' 2>&1
+if [[ -z "$TUNNEL_TOKEN" ]]; then
+  TUNNEL_TOKEN="$(cloudflared tunnel token "$TUNNEL_NAME")"
 fi
-"
+
+screen -dmS vllm-api bash -lc "cd /home/nvidia && source '$VLLM_ENV/bin/activate' && export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && python -m vllm.entrypoints.openai.api_server --model '$MODEL_PATH' --port 8000 --tensor-parallel-size 1 --max-model-len '$MODEL_MAX_LEN' --enforce-eager --gpu-memory-utilization '$GPU_MEMORY_UTILIZATION' > '$VLLM_LOG' 2>&1"
+screen -dmS gatekeeper-api bash -lc "set -a && [[ -f '$ENV_FILE' ]] && source '$ENV_FILE' && set +a && '$GATEKEEPER_BIN' > '$GATEKEEPER_LOG' 2>&1"
+screen -dmS tunnel-gpu bash -lc "if [[ -n '$TUNNEL_TOKEN' ]]; then /usr/local/bin/cloudflared --no-autoupdate tunnel run --token '$TUNNEL_TOKEN' > '$TUNNEL_LOG' 2>&1; else /usr/local/bin/cloudflared --no-autoupdate tunnel run '$TUNNEL_NAME' > '$TUNNEL_LOG' 2>&1; fi"
 
 echo "Started screens: vllm-api, gatekeeper-api, tunnel-gpu"
 echo "Logs: $VLLM_LOG, $GATEKEEPER_LOG, $TUNNEL_LOG"
