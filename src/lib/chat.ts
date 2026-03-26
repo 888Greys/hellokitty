@@ -2,7 +2,7 @@ export const APP_TITLE = 'Command Deck'
 export const DEFAULT_TEMPERATURE = 0.6
 export const DEFAULT_TOP_P = 0.95
 export const DEFAULT_MAX_TOKENS = 1024
-export const DEFAULT_STREAM = true
+export const DEFAULT_STREAM = false
 export const DEFAULT_SYSTEM_PROMPT =
   'You are a pragmatic coding assistant. Answer directly and clearly. Use normal prose by default.'
 

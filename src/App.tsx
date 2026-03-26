@@ -122,7 +122,8 @@ function App() {
   }, [activeSession, sessions])
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+    if (!scrollRef.current) return
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [sessions, activeSessionId])
 
   async function refreshModels(preferred = settings.selectedModel) {
@@ -285,29 +286,36 @@ function App() {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let fullText = ''
+      let sseBuffer = ''
 
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
-        const chunk = decoder.decode(value, { stream: true })
-        const lines = chunk.split('\n')
+        sseBuffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const payloadLine = line.slice(6).trim()
-          if (payloadLine === '[DONE]') continue
-          try {
-            const data = JSON.parse(payloadLine) as {
-              choices?: Array<{ delta?: { content?: string } }>
+        const events = sseBuffer.split('\n\n')
+        sseBuffer = events.pop() ?? ''
+
+        for (const eventChunk of events) {
+          const lines = eventChunk.split('\n')
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const payloadLine = line.slice(6).trim()
+            if (!payloadLine || payloadLine === '[DONE]') continue
+            try {
+              const data = JSON.parse(payloadLine) as {
+                choices?: Array<{ delta?: { content?: string } }>
+              }
+              const token = data.choices?.[0]?.delta?.content ?? ''
+              if (!token) continue
+              fullText += token
+              applyAssistantContent(fullText, titleSeed)
+            } catch {
+              // keep incomplete fragments in the rolling buffer path
             }
-            const token = data.choices?.[0]?.delta?.content ?? ''
-            if (!token) continue
-            fullText += token
-            applyAssistantContent(fullText, titleSeed)
-          } catch {
-            // ignore fragmented SSE lines
           }
         }
+
+        if (done) break
       }
 
       setStatus({ label: 'Ready', tone: 'ready' })
