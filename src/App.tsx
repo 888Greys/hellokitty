@@ -1,31 +1,82 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent } from 'react'
+import type { ChangeEvent, DragEvent, FormEvent, HTMLAttributes, KeyboardEvent, ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import {
   APP_TITLE,
   DEFAULT_MAX_TOKENS,
+  DEFAULT_PROFILE,
+  DEFAULT_RESPONSE_STYLE,
   DEFAULT_STREAM,
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_TEMPERATURE,
   DEFAULT_TOP_P,
   buildChatPayload,
+  buildSessionTitle,
+  buildSystemPrompt,
   chooseModel,
   createInitialSession,
   createMessage,
   estimateTokens,
   formatTime,
+  isVagueAssistantReply,
   makeDefaultApiBase,
   normalizeApiBase,
   sanitizeSessions,
+  type AssistantProfile,
   type ChatSession,
   type ChatSettings,
+  type ResponseStyle,
 } from './lib/chat'
 
 const SETTINGS_KEY = 'bb.chat.settings.v2'
 const SESSIONS_KEY = 'bb.chat.sessions.v2'
+const REQUEST_TIMEOUT_MS = 90_000
+
+const PROFILE_OPTIONS: Array<{ value: AssistantProfile; label: string }> = [
+  { value: 'engineer', label: 'Engineer' },
+  { value: 'reviewer', label: 'Reviewer' },
+  { value: 'debugger', label: 'Debugger' },
+]
+
+const RESPONSE_STYLE_OPTIONS: Array<{ value: ResponseStyle; label: string }> = [
+  { value: 'concise', label: 'Concise' },
+  { value: 'engineer', label: 'Engineer' },
+  { value: 'deep', label: 'Deep dive' },
+]
+
+const PROMPT_TEMPLATES = [
+  {
+    label: 'Debug',
+    prompt:
+      'Help me debug this issue. Start with the most likely root cause, then give the shortest sequence of checks and fixes that will actually work.',
+  },
+  {
+    label: 'Code review',
+    prompt:
+      'Review this like a senior engineer. Focus on bugs, regressions, risks, and missing tests. Keep the findings concrete.',
+  },
+  {
+    label: 'Architecture',
+    prompt:
+      'Propose the simplest architecture that will work in production. Call out tradeoffs, bottlenecks, and what I should avoid.',
+  },
+  {
+    label: 'Refactor',
+    prompt:
+      'Refactor this safely. Suggest the smallest changes that improve maintainability without causing regressions.',
+  },
+  {
+    label: 'Incident',
+    prompt:
+      'Treat this like a production incident. Give triage steps, likely root causes, rollback options, and the fastest safe fix.',
+  },
+]
 
 type StatusTone = 'ready' | 'busy' | 'error' | 'warn'
+type ErrorKind = 'auth' | 'model' | 'server' | 'context' | 'network' | 'timeout' | ''
 
 type RuntimeStatus = {
   label: string
@@ -77,6 +128,17 @@ function loadSessions(): ChatSession[] {
   }
 }
 
+function classifyError(message: string, status?: number, timedOut = false): ErrorKind {
+  const normalized = message.toLowerCase()
+
+  if (status === 401 || normalized.includes('authentication required')) return 'auth'
+  if (timedOut || normalized.includes('timed out')) return 'timeout'
+  if (status === 404 || normalized.includes('model changed') || normalized.includes('no live model')) return 'model'
+  if (status && status >= 500) return 'server'
+  if (normalized.includes('context') || normalized.includes('8192')) return 'context'
+  return 'network'
+}
+
 function App() {
   const [settings, setSettings] = useState<ChatSettings>(() => loadSettings())
   const [draftSettings, setDraftSettings] = useState<ChatSettings>(() => loadSettings())
@@ -85,12 +147,20 @@ function App() {
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [composer, setComposer] = useState('')
   const [showSettings, setShowSettings] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [sessionQuery, setSessionQuery] = useState('')
   const [status, setStatus] = useState<RuntimeStatus>({ label: 'Ready', tone: 'ready' })
   const [errorText, setErrorText] = useState('')
+  const [errorKind, setErrorKind] = useState<ErrorKind>('')
   const [needsLogin, setNeedsLogin] = useState(false)
   const [activeModel, setActiveModel] = useState(settings.selectedModel)
   const [isSending, setIsSending] = useState(false)
+  const [copiedToken, setCopiedToken] = useState('')
+  const [isDragOver, setIsDragOver] = useState(false)
+
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const composerRef = useRef<HTMLTextAreaElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const activeSession = useMemo(
@@ -102,6 +172,29 @@ function App() {
     if (!activeSession) return 0
     return estimateTokens(activeSession.messages)
   }, [activeSession])
+
+  const visibleMessages = activeSession?.messages.filter((message) => message.role !== 'system') ?? []
+  const isEmptyState = visibleMessages.length === 0
+  const activeProfile = activeSession?.profile ?? DEFAULT_PROFILE
+  const activeResponseStyle = activeSession?.responseStyle ?? DEFAULT_RESPONSE_STYLE
+
+  const filteredSessions = useMemo(() => {
+    const needle = sessionQuery.trim().toLowerCase()
+
+    return sessions
+      .slice()
+      .sort(
+        (left, right) =>
+          Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || right.updatedAt - left.updatedAt,
+      )
+      .filter((session) => {
+        if (!needle) return true
+        const haystack = [session.title, session.messages.find((message) => message.role === 'user')?.content ?? '']
+          .join(' ')
+          .toLowerCase()
+        return haystack.includes(needle)
+      })
+  }, [sessionQuery, sessions])
 
   useEffect(() => {
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
@@ -125,6 +218,79 @@ function App() {
     if (!scrollRef.current) return
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [sessions, activeSessionId])
+
+  useEffect(() => {
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      const isModifier = event.metaKey || event.ctrlKey
+
+      if (isModifier && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        composerRef.current?.focus()
+      }
+
+      if (event.key === 'Escape') {
+        setShowSettings(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  function updateSession(mutator: (session: ChatSession) => ChatSession) {
+    setSessions((current) =>
+      current.map((session) => (session.id === activeSessionId ? mutator(session) : session)),
+    )
+  }
+
+  function buildSessionPrompt(profile: AssistantProfile, responseStyle: ResponseStyle) {
+    return buildSystemPrompt(profile, responseStyle)
+  }
+
+  function handleNewChat() {
+    const next = createInitialSession(buildSessionPrompt(activeProfile, activeResponseStyle), {
+      profile: activeProfile,
+      responseStyle: activeResponseStyle,
+    })
+    setSessions((current) => [next, ...current])
+    setActiveSessionId(next.id)
+    setComposer('')
+    setErrorText('')
+    setErrorKind('')
+    setStatus({ label: 'Ready', tone: 'ready' })
+  }
+
+  function handleClearContext() {
+    updateSession((session) => ({
+      ...session,
+      title: 'New Chat',
+      updatedAt: Date.now(),
+      messages: [
+        createMessage(
+          'system',
+          buildSessionPrompt(session.profile ?? DEFAULT_PROFILE, session.responseStyle ?? DEFAULT_RESPONSE_STYLE),
+        ),
+      ],
+    }))
+    setStatus({ label: 'Context Cleared', tone: 'ready' })
+    setErrorText('')
+    setErrorKind('')
+  }
+
+  function updateActiveSessionPreset(nextProfile: AssistantProfile, nextResponseStyle: ResponseStyle) {
+    updateSession((session) => {
+      const nextMessages = [...session.messages]
+      nextMessages[0] = createMessage('system', buildSessionPrompt(nextProfile, nextResponseStyle))
+      return {
+        ...session,
+        profile: nextProfile,
+        responseStyle: nextResponseStyle,
+        updatedAt: Date.now(),
+        messages: nextMessages,
+      }
+    })
+    setStatus({ label: 'Preset Updated', tone: 'ready' })
+  }
 
   async function refreshModels(preferred = settings.selectedModel) {
     const response = await fetch(`${settings.apiBase}/models`, {
@@ -154,32 +320,6 @@ function App() {
     return models
   }
 
-  function updateSession(mutator: (session: ChatSession) => ChatSession) {
-    setSessions((current) =>
-      current.map((session) => (session.id === activeSessionId ? mutator(session) : session)),
-    )
-  }
-
-  function handleNewChat() {
-    const next = createInitialSession(DEFAULT_SYSTEM_PROMPT)
-    setSessions((current) => [next, ...current])
-    setActiveSessionId(next.id)
-    setComposer('')
-    setErrorText('')
-    setStatus({ label: 'Ready', tone: 'ready' })
-  }
-
-  function handleClearContext() {
-    updateSession((session) => ({
-      ...session,
-      title: 'New Chat',
-      updatedAt: Date.now(),
-      messages: [createMessage('system', DEFAULT_SYSTEM_PROMPT)],
-    }))
-    setStatus({ label: 'Context Cleared', tone: 'ready' })
-    setErrorText('')
-  }
-
   function applyAssistantContent(content: string, titleSeed?: string) {
     updateSession((session) => {
       const messages = [...session.messages]
@@ -188,29 +328,40 @@ function App() {
         last.content = content
       }
 
-      const title =
-        session.title === 'New Chat' && titleSeed ? titleSeed.slice(0, 44).trim() || session.title : session.title
-
       return {
         ...session,
-        title,
+        title: session.title === 'New Chat' && titleSeed ? buildSessionTitle(titleSeed) : session.title,
         updatedAt: Date.now(),
         messages,
       }
     })
   }
 
-  async function sendPrompt(event?: FormEvent) {
-    event?.preventDefault()
-    if (!composer.trim() || !activeSession || isSending) return
+  async function copyText(token: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedToken(token)
+      window.setTimeout(() => {
+        setCopiedToken((current) => (current === token ? '' : current))
+      }, 1400)
+    } catch {
+      setErrorText('Copy failed. Clipboard access was blocked.')
+      setErrorKind('network')
+      setStatus({ label: 'Clipboard Blocked', tone: 'warn' })
+    }
+  }
 
-    const userText = composer.trim()
+  async function submitPrompt(userText: string) {
+    if (!userText.trim() || !activeSession || isSending) return
+
     const assistantPlaceholder = createMessage('assistant', '')
-    const userMessage = createMessage('user', userText)
-    const titleSeed = userText
+    const userMessage = createMessage('user', userText.trim())
+    const titleSeed = userText.trim()
 
     setComposer('')
     setErrorText('')
+    setErrorKind('')
+    setNeedsLogin(false)
     setStatus({ label: settings.stream ? 'Thinking / Streaming' : 'Thinking', tone: 'busy' })
     setIsSending(true)
 
@@ -219,6 +370,8 @@ function App() {
       updatedAt: Date.now(),
       messages: [...session.messages, userMessage, assistantPlaceholder],
     }))
+
+    let timedOut = false
 
     try {
       let model = activeModel || settings.selectedModel
@@ -240,6 +393,10 @@ function App() {
       )
 
       const controller = new AbortController()
+      const timeoutId = window.setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, REQUEST_TIMEOUT_MS)
       abortRef.current = controller
 
       const response = await fetch(`${settings.apiBase}/chat/completions`, {
@@ -251,6 +408,8 @@ function App() {
         body: JSON.stringify(payload),
         signal: controller.signal,
       })
+
+      window.clearTimeout(timeoutId)
 
       if (response.status === 401) {
         const unauthorizedError = new Error('Authentication required. Open the hosted login once, then retry.') as RequestError
@@ -266,14 +425,13 @@ function App() {
           setActiveModel(fallback)
           applyAssistantContent(`Model changed to ${fallback}. Retry the prompt.`, titleSeed)
           setStatus({ label: 'Model Updated', tone: 'warn' })
-          setErrorText('')
           return
         }
       }
 
       if (!response.ok) {
         const message = await response.text()
-        throw new Error(`HTTP ${response.status}: ${message}`)
+        throw Object.assign(new Error(`HTTP ${response.status}: ${message}`), { status: response.status }) as RequestError
       }
 
       if (!settings.stream || !response.body) {
@@ -320,9 +478,17 @@ function App() {
 
       setStatus({ label: 'Ready', tone: 'ready' })
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Request failed'
-      const statusCode = (error as RequestError | undefined)?.status
-      setNeedsLogin(statusCode === 401)
+      const requestError = error as RequestError
+      const message =
+        timedOut && requestError.name === 'AbortError'
+          ? 'Request timed out. Retry with a shorter prompt or lower max tokens.'
+          : requestError instanceof Error
+            ? requestError.message
+            : 'Request failed'
+      const statusCode = requestError?.status
+      const nextErrorKind = classifyError(message, statusCode, timedOut)
+      setNeedsLogin(nextErrorKind === 'auth')
+      setErrorKind(nextErrorKind)
       applyAssistantContent(`Error: ${message}`, titleSeed)
       setErrorText(message)
       setStatus({ label: 'Connection Error', tone: 'error' })
@@ -330,6 +496,13 @@ function App() {
       abortRef.current = null
       setIsSending(false)
     }
+  }
+
+  async function sendPrompt(event?: FormEvent) {
+    event?.preventDefault()
+    const userText = composer.trim()
+    if (!userText) return
+    await submitPrompt(userText)
   }
 
   function stopGeneration() {
@@ -361,6 +534,131 @@ function App() {
     }
   }
 
+  function replayLastPrompt(mode: 'retry' | 'edit') {
+    const lastUser = [...(activeSession?.messages ?? [])].reverse().find((item) => item.role === 'user')
+    if (!lastUser) return
+
+    if (mode === 'edit') {
+      setComposer(lastUser.content)
+      composerRef.current?.focus()
+      return
+    }
+
+    void submitPrompt(lastUser.content)
+  }
+
+  function togglePin(sessionId: string) {
+    setSessions((current) =>
+      current.map((session) =>
+        session.id === sessionId ? { ...session, pinned: !session.pinned, updatedAt: Date.now() } : session,
+      ),
+    )
+  }
+
+  function applyTemplate(prompt: string) {
+    setComposer(prompt)
+    composerRef.current?.focus()
+  }
+
+  async function importFiles(files: FileList | File[]) {
+    const selected = Array.from(files).slice(0, 4)
+    if (!selected.length) return
+
+    const blocks = await Promise.all(
+      selected.map(async (file) => {
+        const text = await file.text().catch(() => '')
+        return text
+          ? `\n\n[Attached: ${file.name}]\n\`\`\`\n${text.slice(0, 12000)}\n\`\`\``
+          : ''
+      }),
+    )
+
+    const next = blocks.filter(Boolean).join('\n')
+    if (next) {
+      setComposer((current) => `${current}${next}`.trim())
+      composerRef.current?.focus()
+    }
+  }
+
+  async function handleFileInputChange(event: ChangeEvent<HTMLInputElement>) {
+    if (!event.target.files?.length) return
+    await importFiles(event.target.files)
+    event.target.value = ''
+  }
+
+  async function handleComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (!event.clipboardData.files.length) return
+    event.preventDefault()
+    await importFiles(event.clipboardData.files)
+  }
+
+  async function handleDrop(event: DragEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setIsDragOver(false)
+    if (!event.dataTransfer.files.length) return
+    await importFiles(event.dataTransfer.files)
+  }
+
+  function renderMarkdown(content: string, messageId: string) {
+    return (
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          pre({ children }) {
+            return <>{children}</>
+          },
+          code(props) {
+            const typedProps = props as {
+              inline?: boolean
+              className?: string
+              children?: ReactNode
+            } & HTMLAttributes<HTMLElement>
+            const { className, children, ...rest } = typedProps
+            const value = String(children).replace(/\n$/, '')
+            const inline = typedProps.inline ?? (!className && !value.includes('\n'))
+
+            if (inline) {
+              return (
+                <code className={className} {...rest}>
+                  {children}
+                </code>
+              )
+            }
+
+            const token = `code-${messageId}-${value.slice(0, 24)}`
+            const language = className?.replace('language-', '') || 'text'
+
+            return (
+              <div className="code-block">
+                <div className="code-toolbar">
+                  <span>{language}</span>
+                  <button type="button" className="ghost-button mini-button" onClick={() => void copyText(token, value)}>
+                    {copiedToken === token ? 'Copied' : 'Copy code'}
+                  </button>
+                </div>
+                <SyntaxHighlighter
+                  language={language}
+                  style={oneDark}
+                  customStyle={{
+                    margin: 0,
+                    padding: '14px',
+                    borderRadius: '16px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: '#0d1117',
+                  }}
+                >
+                  {value}
+                </SyntaxHighlighter>
+              </div>
+            )
+          },
+        }}
+      >
+        {content}
+      </Markdown>
+    )
+  }
+
   const statusClass =
     status.tone === 'ready'
       ? 'status-ready'
@@ -373,47 +671,66 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand-card">
-          <div className="brand-kicker">Local Control Surface</div>
-          <h1>{APP_TITLE}</h1>
-          <p>Desktop Vite client for your gated vLLM stack.</p>
+        <div className="brand-shell">
+          <div className="brand-mark">AI</div>
+          <div className="brand-copy">
+            <div className="brand-kicker">Local Chat</div>
+            <h1>{APP_TITLE}</h1>
+          </div>
         </div>
 
-        <button className="primary-button" type="button" onClick={handleNewChat}>
-          New Chat
-        </button>
-        <button className="secondary-button" type="button" onClick={handleClearContext}>
-          Clear Context
-        </button>
+        <div className="sidebar-actions">
+          <button className="primary-button" type="button" onClick={handleNewChat}>
+            New chat
+          </button>
+          <button className="secondary-button" type="button" onClick={handleClearContext}>
+            Clear
+          </button>
+        </div>
+
+        <label className="session-search">
+          <span>Search chats</span>
+          <input
+            value={sessionQuery}
+            onChange={(event) => setSessionQuery(event.target.value)}
+            placeholder="Find a chat..."
+          />
+        </label>
 
         <div className="session-list">
-          {sessions
-            .slice()
-            .sort((a, b) => b.updatedAt - a.updatedAt)
-            .map((session) => (
-              <button
-                key={session.id}
-                type="button"
-                className={`session-card ${session.id === activeSession?.id ? 'session-card-active' : ''}`}
-                onClick={() => setActiveSessionId(session.id)}
-              >
+          {filteredSessions.map((session) => (
+            <div
+              key={session.id}
+              className={`session-row ${session.id === activeSession?.id ? 'session-row-active' : ''}`}
+            >
+              <button type="button" className="session-card" onClick={() => setActiveSessionId(session.id)}>
                 <span className="session-title">{session.title}</span>
                 <span className="session-time">{formatTime(session.updatedAt)}</span>
               </button>
-            ))}
+              <button
+                type="button"
+                className={`ghost-button mini-button session-pin ${session.pinned ? 'session-pin-active' : ''}`}
+                onClick={() => togglePin(session.id)}
+              >
+                {session.pinned ? 'Pinned' : 'Pin'}
+              </button>
+            </div>
+          ))}
         </div>
       </aside>
 
       <main className="workspace">
         <header className="topbar">
-          <div className={`status-pill ${statusClass}`}>{status.label}</div>
-          <div className="topbar-meta">
-            <span>
-              Model: <strong>{activeModel || 'Auto detect'}</strong>
-            </span>
-            <span>
-              Context: <strong>{contextEstimate}</strong> / 8192 est.
-            </span>
+          <div className="topbar-left">
+            <div className={`status-pill ${statusClass}`}>{status.label}</div>
+            <div className="topbar-meta">
+              <span>
+                Model <strong>{activeModel || 'Auto detect'}</strong>
+              </span>
+              <span>
+                Context <strong>{contextEstimate}</strong> / 8192
+              </span>
+            </div>
           </div>
           <div className="topbar-actions">
             <button type="button" className="ghost-button" onClick={() => setShowSettings(true)}>
@@ -426,17 +743,16 @@ function App() {
                 refreshModels()
                   .then(() => {
                     setNeedsLogin(false)
+                    setErrorText('')
+                    setErrorKind('')
                     setStatus({ label: 'Models Refreshed', tone: 'ready' })
                   })
                   .catch((error: RequestError) => {
-                    if (error.status === 401) {
-                      setNeedsLogin(true)
-                      setErrorText(error.message)
-                      setStatus({ label: 'Login Required', tone: 'warn' })
-                      return
-                    }
+                    const nextErrorKind = classifyError(error.message, error.status)
+                    setNeedsLogin(nextErrorKind === 'auth')
+                    setErrorKind(nextErrorKind)
                     setErrorText(error.message)
-                    setStatus({ label: 'Model Refresh Failed', tone: 'error' })
+                    setStatus({ label: nextErrorKind === 'auth' ? 'Login Required' : 'Model Refresh Failed', tone: 'warn' })
                   })
               }}
             >
@@ -446,117 +762,251 @@ function App() {
         </header>
 
         <section className="chat-panel" ref={scrollRef}>
-          {activeSession?.messages
-            .filter((message) => message.role !== 'system')
-            .map((message) => (
+          <div className="chat-column">
+            {isEmptyState ? (
+              <section className="empty-state">
+                <h2>How can I help?</h2>
+                <p>Ask code, debugging, architecture, or review questions. The live model is ready.</p>
+                <div className="template-grid">
+                  {PROMPT_TEMPLATES.map((template) => (
+                    <button
+                      key={template.label}
+                      type="button"
+                      className="template-chip"
+                      onClick={() => applyTemplate(template.prompt)}
+                    >
+                      {template.label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {visibleMessages.map((message) => (
               <article
                 key={message.id}
                 className={`message-card ${message.role === 'user' ? 'message-user' : 'message-assistant'}`}
               >
-                <div className="message-role">{message.role === 'user' ? 'User' : 'Assistant'}</div>
+                <div className="message-role">{message.role === 'user' ? 'You' : 'Assistant'}</div>
                 {message.role === 'assistant' ? (
                   <div className="markdown-body">
-                    <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
+                    {message.content ? renderMarkdown(message.content, message.id) : <div className="typing-indicator">Thinking<span /><span /><span /></div>}
                   </div>
                 ) : (
                   <div className="message-plain">{message.content}</div>
                 )}
+                <div className="message-actions">
+                  {message.role === 'assistant' && message.content ? (
+                    <>
+                      <button
+                        type="button"
+                        className="ghost-button mini-button"
+                        onClick={() => void copyText(`reply-${message.id}`, message.content)}
+                      >
+                        {copiedToken === `reply-${message.id}` ? 'Copied' : 'Copy'}
+                      </button>
+                      <button type="button" className="ghost-button mini-button" onClick={() => replayLastPrompt('retry')}>
+                        Retry
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button mini-button"
+                        onClick={() => void submitPrompt('Continue from where you stopped. Do not repeat prior content.')}
+                      >
+                        Continue
+                      </button>
+                      {isVagueAssistantReply(message.content) ? (
+                        <button
+                          type="button"
+                          className="ghost-button mini-button"
+                          onClick={() =>
+                            void submitPrompt(
+                              'Rewrite your last answer with only concrete steps, exact commands, and specific file changes. Remove vague language.',
+                            )
+                          }
+                        >
+                          Make concrete
+                        </button>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {message.role === 'user' ? (
+                    <button type="button" className="ghost-button mini-button" onClick={() => setComposer(message.content)}>
+                      Edit
+                    </button>
+                  ) : null}
+                </div>
               </article>
             ))}
+          </div>
         </section>
 
-        {errorText ? (
-          <div className="error-banner">
-            <span>{errorText}</span>
-            {needsLogin ? (
-              <button type="button" className="ghost-button error-action" onClick={openHostedLogin}>
-                Open Login Page
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-
         <section className="composer-panel">
-          <div className="controls-grid">
+          {errorText ? (
+            <div className={`error-banner ${errorKind ? `error-${errorKind}` : ''}`}>
+              <span className="error-badge">{errorKind || 'error'}</span>
+              <span className="error-copy">{errorText}</span>
+              {needsLogin ? (
+                <button type="button" className="ghost-button error-action" onClick={openHostedLogin}>
+                  Open Login Page
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="composer-toolbar">
+            <div className="composer-toolbar-left">
+              <button type="button" className="ghost-button mini-button" onClick={() => setShowAdvanced((current) => !current)}>
+                {showAdvanced ? 'Hide controls' : 'Show controls'}
+              </button>
+              <button type="button" className="ghost-button mini-button" onClick={() => fileInputRef.current?.click()}>
+                Attach text/log
+              </button>
+            </div>
+            <div className="composer-toolbar-meta">
+              <span>{settings.stream ? 'Streaming on' : 'Streaming off'}</span>
+              <span>{settings.maxTokens} max tokens</span>
+              <span>Ctrl/Cmd+K focuses composer</span>
+            </div>
+          </div>
+
+          <div className="preset-row">
             <label>
-              <span>Temperature</span>
-              <input
-                type="number"
-                min="0"
-                max="2"
-                step="0.1"
-                value={settings.temperature}
-                onChange={(event) =>
-                  setSettings((current) => ({ ...current, temperature: Number(event.target.value) }))
-                }
-              />
-            </label>
-            <label>
-              <span>Max Tokens</span>
-              <input
-                type="number"
-                min="64"
-                max="4096"
-                step="64"
-                value={settings.maxTokens}
-                onChange={(event) =>
-                  setSettings((current) => ({ ...current, maxTokens: Number(event.target.value) }))
-                }
-              />
-            </label>
-            <label>
-              <span>Top P</span>
-              <input
-                type="number"
-                min="0"
-                max="1"
-                step="0.05"
-                value={settings.topP}
-                onChange={(event) => setSettings((current) => ({ ...current, topP: Number(event.target.value) }))}
-              />
-            </label>
-            <label>
-              <span>Stream</span>
+              <span>Profile</span>
               <select
-                value={String(settings.stream)}
-                onChange={(event) =>
-                  setSettings((current) => ({ ...current, stream: event.target.value === 'true' }))
-                }
+                value={activeProfile}
+                onChange={(event) => updateActiveSessionPreset(event.target.value as AssistantProfile, activeResponseStyle)}
               >
-                <option value="true">Enabled</option>
-                <option value="false">Disabled</option>
+                {PROFILE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span>Style</span>
+              <select
+                value={activeResponseStyle}
+                onChange={(event) => updateActiveSessionPreset(activeProfile, event.target.value as ResponseStyle)}
+              >
+                {RESPONSE_STYLE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </label>
           </div>
 
-          <form onSubmit={sendPrompt}>
+          {showAdvanced ? (
+            <div className="controls-grid">
+              <label>
+                <span>Temperature</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  value={settings.temperature}
+                  onChange={(event) =>
+                    setSettings((current) => ({ ...current, temperature: Number(event.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                <span>Max Tokens</span>
+                <input
+                  type="number"
+                  min="64"
+                  max="4096"
+                  step="64"
+                  value={settings.maxTokens}
+                  onChange={(event) =>
+                    setSettings((current) => ({ ...current, maxTokens: Number(event.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                <span>Top P</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={settings.topP}
+                  onChange={(event) => setSettings((current) => ({ ...current, topP: Number(event.target.value) }))}
+                />
+              </label>
+              <label>
+                <span>Stream</span>
+                <select
+                  value={String(settings.stream)}
+                  onChange={(event) =>
+                    setSettings((current) => ({ ...current, stream: event.target.value === 'true' }))
+                  }
+                >
+                  <option value="true">Enabled</option>
+                  <option value="false">Disabled</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
+
+          <form
+            onSubmit={sendPrompt}
+            className={`composer-form ${isDragOver ? 'composer-form-dragover' : ''}`}
+            onDragOver={(event) => {
+              event.preventDefault()
+              setIsDragOver(true)
+            }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={(event) => void handleDrop(event)}
+          >
             <textarea
+              ref={composerRef}
               className="composer"
               value={composer}
               onChange={(event) => setComposer(event.target.value)}
               onKeyDown={handleComposerKeyDown}
+              onPaste={(event) => void handleComposerPaste(event)}
               placeholder="Ask for code, architecture, debugging, or reviews..."
               rows={5}
             />
+            <div className="template-row">
+              {PROMPT_TEMPLATES.map((template) => (
+                <button
+                  key={template.label}
+                  type="button"
+                  className="template-chip template-chip-small"
+                  onClick={() => applyTemplate(template.prompt)}
+                >
+                  {template.label}
+                </button>
+              ))}
+            </div>
             <div className="composer-actions">
               <button type="submit" className="primary-button" disabled={isSending}>
                 Send
               </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  const lastUser = [...(activeSession?.messages ?? [])].reverse().find((item) => item.role === 'user')
-                  if (lastUser) setComposer(lastUser.content)
-                }}
-              >
-                Retry Last
+              <button type="button" className="secondary-button" onClick={() => replayLastPrompt('edit')}>
+                Edit last
               </button>
               <button type="button" className="danger-button" onClick={stopGeneration} disabled={!isSending}>
                 Stop
               </button>
             </div>
           </form>
+
+          <input
+            ref={fileInputRef}
+            hidden
+            type="file"
+            multiple
+            accept=".txt,.log,.md,.json,.js,.ts,.tsx,.py,.go,.rs,.html,.css,.yaml,.yml,.sh"
+            onChange={(event) => void handleFileInputChange(event)}
+          />
         </section>
       </main>
 

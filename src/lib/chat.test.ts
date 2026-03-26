@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_PROFILE,
+  DEFAULT_RESPONSE_STYLE,
+  buildSystemPrompt,
+  buildSessionTitle,
   buildChatPayload,
   chooseModel,
   createInitialSession,
   createMessage,
   isLegacyArchitectPrompt,
+  isVagueAssistantReply,
   normalizeApiBase,
   sanitizeSessions,
 } from './chat'
@@ -55,6 +60,41 @@ describe('chat helpers', () => {
     const sanitized = sanitizeSessions(sessions, 'clean prompt')
     expect(sanitized[0]?.title).toBe('New Chat')
     expect(sanitized[0]?.messages).toHaveLength(1)
-    expect(sanitized[0]?.messages[0]?.content).toBe('clean prompt')
+    expect(sanitized[0]?.messages[0]?.content).toBe(buildSystemPrompt(DEFAULT_PROFILE, DEFAULT_RESPONSE_STYLE))
+  })
+
+  it('replaces previous default prompts with the new default prompt', () => {
+    const sessions = [
+      {
+        id: '1',
+        title: 'Existing Session',
+        updatedAt: 1,
+        messages: [
+          createMessage('system', 'You are a pragmatic coding assistant. Answer directly and clearly. Use normal prose by default.'),
+          createMessage('user', 'hello'),
+        ],
+      },
+    ]
+
+    const sanitized = sanitizeSessions(sessions, 'new prompt')
+    expect(sanitized[0]?.messages[0]?.content).toBe('new prompt')
+    expect(sanitized[0]?.messages[1]?.content).toBe('hello')
+  })
+
+  it('builds compact chat titles from the first prompt', () => {
+    expect(buildSessionTitle('   Need help fixing a broken auth redirect loop in production   ')).toBe(
+      'Need help fixing a broken auth redirect loop',
+    )
+  })
+
+  it('builds a stronger system prompt from profile and style', () => {
+    const prompt = buildSystemPrompt('debugger', 'deep')
+    expect(prompt).toContain('incident-response engineer')
+    expect(prompt).toContain('Go deeper on tradeoffs')
+  })
+
+  it('flags vague assistant replies', () => {
+    expect(isVagueAssistantReply('It depends. One option is to try a couple of approaches.')).toBe(true)
+    expect(isVagueAssistantReply('Run these exact commands and verify the returned status code is 200.')).toBe(false)
   })
 })
