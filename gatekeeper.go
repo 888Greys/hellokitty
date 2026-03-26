@@ -4,13 +4,17 @@ import (
     "crypto/sha256"
     "crypto/subtle"
     "encoding/hex"
+    "encoding/json"
+    "errors"
     "log"
+    "net"
     "net/http"
     "net/http/httputil"
     "net/url"
     "os"
     "path/filepath"
     "strings"
+    "syscall"
 )
 
 func firstNonEmpty(values ...string) string {
@@ -47,6 +51,27 @@ func unauthorized(w http.ResponseWriter) {
     http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
+func writeJSONError(w http.ResponseWriter, status int, message string, errorType string) {
+    setCORS(w)
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(status)
+    _ = json.NewEncoder(w).Encode(map[string]any{
+        "error": map[string]any{
+            "message": message,
+            "type":    errorType,
+            "code":    status,
+        },
+    })
+}
+
+func isUpstreamDialError(err error) bool {
+    var opErr *net.OpError
+    if errors.As(err, &opErr) {
+        return errors.Is(opErr.Err, syscall.ECONNREFUSED) || errors.Is(opErr.Err, syscall.ECONNRESET)
+    }
+    return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET)
+}
+
 func main() {
     apiKey := firstNonEmpty(os.Getenv("API_KEY"), os.Getenv("POMPOM_KEY"))
     if apiKey == "" {
@@ -72,6 +97,15 @@ func main() {
     proxy := httputil.NewSingleHostReverseProxy(target)
     proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
         log.Printf("proxy error %s %s: %v", r.Method, r.URL.Path, err)
+        if strings.HasPrefix(r.URL.Path, "/v1/") || r.URL.Path == "/v1" {
+            w.Header().Set("Retry-After", "10")
+            if isUpstreamDialError(err) {
+                writeJSONError(w, http.StatusServiceUnavailable, "Model warming up. Retry in a few seconds.", "ServiceUnavailableError")
+                return
+            }
+            writeJSONError(w, http.StatusBadGateway, "Upstream unavailable. Retry in a few seconds.", "BadGatewayError")
+            return
+        }
         http.Error(w, "Upstream unavailable", http.StatusBadGateway)
     }
 
