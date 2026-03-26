@@ -38,6 +38,36 @@ describe('chat helpers', () => {
     expect(payload.messages[0]).toEqual({ role: 'system', content: 'system prompt' })
   })
 
+  it('drops older context when the payload would exceed the context window', () => {
+    const session = createInitialSession('system prompt')
+    const messages = [
+      ...session.messages,
+      createMessage('user', 'old '.repeat(4000)),
+      createMessage('assistant', 'reply '.repeat(4000)),
+      createMessage('user', 'latest '.repeat(3000)),
+    ]
+
+    const payload = buildChatPayload(messages, 'model-1', 0.6, 0.9, 1024, false)
+    expect(payload.messages[0]?.role).toBe('system')
+    expect(payload.messages.at(-1)?.content).toContain('latest')
+    expect(payload.messages.some((message) => message.content.includes('old old old old'))).toBe(false)
+  })
+
+  it('trims the newest message when it alone exceeds the remaining context budget', () => {
+    const session = createInitialSession('system prompt')
+    const payload = buildChatPayload(
+      [...session.messages, createMessage('user', 'x'.repeat(40000))],
+      'model-1',
+      0.6,
+      0.9,
+      4096,
+      false,
+    )
+
+    expect(payload.messages).toHaveLength(2)
+    expect(payload.messages[1]?.content).toContain('[Earlier content trimmed to fit context window.]')
+  })
+
   it('detects the legacy architect prompt', () => {
     expect(isLegacyArchitectPrompt('### SYSTEM ROLE: ARCHITECT-PRIME')).toBe(true)
     expect(isLegacyArchitectPrompt('normal assistant prompt')).toBe(false)

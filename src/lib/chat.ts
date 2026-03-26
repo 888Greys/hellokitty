@@ -5,6 +5,8 @@ export const DEFAULT_MAX_TOKENS = 1024
 export const DEFAULT_STREAM = false
 export const DEFAULT_PROFILE = 'engineer' as const
 export const DEFAULT_RESPONSE_STYLE = 'engineer' as const
+export const MODEL_CONTEXT_WINDOW = 8192
+const CONTEXT_SAFETY_MARGIN = 192
 
 export type AssistantProfile = 'engineer' | 'reviewer' | 'debugger'
 export type ResponseStyle = 'concise' | 'engineer' | 'deep'
@@ -58,6 +60,28 @@ export type ChatSettings = {
   topP: number
   maxTokens: number
   stream: boolean
+}
+
+function estimateContentTokens(content: string) {
+  return Math.ceil(content.length / 4)
+}
+
+function estimateMessageTokens(message: Pick<ChatMessage, 'content'>) {
+  return estimateContentTokens(message.content) + 8
+}
+
+function trimMessageToBudget(message: ChatMessage, tokenBudget: number): ChatMessage {
+  const maxChars = Math.max(160, tokenBudget * 4)
+  if (message.content.length <= maxChars) {
+    return message
+  }
+
+  const suffix = '\n\n[Earlier content trimmed to fit context window.]'
+  const nextContent = `${message.content.slice(-Math.max(80, maxChars - suffix.length)).trimStart()}${suffix}`
+  return {
+    ...message,
+    content: nextContent,
+  }
 }
 
 export function createId() {
@@ -191,9 +215,39 @@ export function buildChatPayload(
   maxTokens: number,
   stream: boolean,
 ) {
+  const systemMessage = messages.find((message) => message.role === 'system')
+  const nonSystemMessages = messages.filter((message) => message.role !== 'system')
+  const contextBudget = Math.max(256, MODEL_CONTEXT_WINDOW - maxTokens - CONTEXT_SAFETY_MARGIN)
+
+  const trimmedMessages: ChatMessage[] = []
+  let usedTokens = systemMessage ? estimateMessageTokens(systemMessage) : 0
+
+  for (let index = nonSystemMessages.length - 1; index >= 0; index -= 1) {
+    const message = nonSystemMessages[index]
+    const messageTokens = estimateMessageTokens(message)
+
+    if (usedTokens + messageTokens <= contextBudget) {
+      trimmedMessages.unshift(message)
+      usedTokens += messageTokens
+      continue
+    }
+
+    if (trimmedMessages.length === 0) {
+      const remainingBudget = Math.max(40, contextBudget - usedTokens)
+      trimmedMessages.unshift(trimMessageToBudget(message, remainingBudget))
+    }
+
+    break
+  }
+
+  const payloadMessages = [
+    ...(systemMessage ? [{ role: systemMessage.role, content: systemMessage.content }] : []),
+    ...trimmedMessages.map(({ role, content }) => ({ role, content })),
+  ]
+
   return {
     model,
-    messages: messages.map(({ role, content }) => ({ role, content })),
+    messages: payloadMessages,
     temperature,
     top_p: topP,
     max_tokens: maxTokens,
@@ -203,7 +257,7 @@ export function buildChatPayload(
 
 export function estimateTokens(messages: ChatMessage[]) {
   const text = messages.map((message) => message.content).join(' ')
-  return Math.ceil(text.length / 4)
+  return estimateContentTokens(text)
 }
 
 export function formatTime(value: number) {
