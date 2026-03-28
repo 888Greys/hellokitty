@@ -36,42 +36,42 @@ const SESSIONS_KEY = 'bb.chat.sessions.v2'
 const REQUEST_TIMEOUT_MS = 90_000
 
 const PROFILE_OPTIONS: Array<{ value: AssistantProfile; label: string }> = [
-  { value: 'engineer', label: 'Engineer' },
-  { value: 'reviewer', label: 'Reviewer' },
-  { value: 'debugger', label: 'Debugger' },
+  { value: 'engineer', label: 'Counsel' },
+  { value: 'reviewer', label: 'Review' },
+  { value: 'debugger', label: 'Risk Check' },
 ]
 
 const RESPONSE_STYLE_OPTIONS: Array<{ value: ResponseStyle; label: string }> = [
   { value: 'concise', label: 'Concise' },
-  { value: 'engineer', label: 'Engineer' },
+  { value: 'engineer', label: 'Counsel' },
   { value: 'deep', label: 'Deep dive' },
 ]
 
 const PROMPT_TEMPLATES = [
   {
-    label: 'Debug',
+    label: 'Issue Spotting',
     prompt:
-      'Help me debug this issue. Start with the most likely root cause, then give the shortest sequence of checks and fixes that will actually work.',
+      'Review this legal issue under Kenyan law. Start with the most likely risk or missing fact, then give the shortest defensible path to fix it.',
   },
   {
-    label: 'Code review',
+    label: 'Draft review',
     prompt:
-      'Review this like a senior engineer. Focus on bugs, regressions, risks, and missing tests. Keep the findings concrete.',
+      'Review this like a senior Kenyan lawyer. Focus on contradictions, missing facts, legal risk, drafting weakness, and anything that should block approval. Keep the findings concrete.',
   },
   {
-    label: 'Architecture',
+    label: 'Matter strategy',
     prompt:
-      'Propose the simplest architecture that will work in production. Call out tradeoffs, bottlenecks, and what I should avoid.',
+      'Propose the simplest legal workflow or matter strategy that will hold up in practice. Call out tradeoffs, bottlenecks, and what should be avoided.',
   },
   {
-    label: 'Refactor',
+    label: 'Redraft',
     prompt:
-      'Refactor this safely. Suggest the smallest changes that improve maintainability without causing regressions.',
+      'Redraft this safely. Suggest the smallest changes that improve clarity, legal defensibility, and review readiness without changing the client's intent.',
   },
   {
-    label: 'Incident',
+    label: 'Urgent risk',
     prompt:
-      'Treat this like a production incident. Give triage steps, likely root causes, rollback options, and the fastest safe fix.',
+      'Treat this like an urgent Kenyan legal risk. Give immediate triage steps, the likely legal exposure, the facts that must be confirmed, and the fastest safe path to contain the issue.',
   },
 ]
 
